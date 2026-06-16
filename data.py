@@ -14,9 +14,9 @@ class CelebAEmbedding(Dataset):
         row = self.df.iloc[idx]
 
         image_emb = torch.tensor(row["image_embeds"], dtype=torch.float32)
-        text_emb = torch.tensor(row["text_embeds"], dtype=torch.float32)
+        category_ids = torch.tensor(row["category_masks"], dtype=torch.float32)
 
-        return image_emb, text_emb
+        return image_emb, category_ids
 
 
 # class Eval(Dataset):
