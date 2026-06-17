@@ -1,7 +1,6 @@
+import lancedb
 import numpy as np
-import pandas
 import pyarrow as pa
-import pyarrow.parquet as pq
 import torch
 from datasets import Features, Sequence, Value
 from torch.utils.data import DataLoader
@@ -27,7 +26,7 @@ class CelebAProcessed(CelebA):
         return pixel_values, categories_mask
 
 
-def proces_categories_embeddings(dataset, processor, model):
+def proces_categories_embeddings(db, dataset, processor, model):
     attr_names = [attr.replace("_", " ") for attr in dataset.attr_names[:40]]
 
     tokens = processor.tokenizer(
@@ -43,10 +42,10 @@ def proces_categories_embeddings(dataset, processor, model):
     table = pa.Table.from_pydict(
         {"text_embeds": text_embeds.tolist()}, schema=features.arrow_schema
     )
-    pq.write_table(table, "categories_embeddings.parquet")
+    db.create_table("categories_embeddings", data=table, mode="overwrite")
 
 
-def process(loader, model, processor, split):
+def process(db, loader, model, processor, split):
     features = Features(
         {
             "image_embeds": Sequence(Value("float32")),
@@ -54,7 +53,7 @@ def process(loader, model, processor, split):
         }
     )
 
-    writer = pq.ParquetWriter("dataset/" + split + ".parquet", features.arrow_schema)
+    table = db.create_table(split, schema=features.arrow_schema, mode="overwrite")
 
     with torch.inference_mode():
         for img, masks in tqdm(loader):
@@ -70,25 +69,21 @@ def process(loader, model, processor, split):
                 "category_masks": list(category_masks),
             }
 
-            record_batch = pa.RecordBatch.from_pydict(
-                batch, schema=features.arrow_schema
-            )
-            writer.write_batch(record_batch)
-        writer.close()
+            record_batch = pa.Table.from_pydict(batch, schema=features.arrow_schema)
+            table.add(record_batch)
 
 
-def generate_dataset(split):
-    df = pandas.read_parquet(
-        "dataset/" + split + ".parquet", columns=["category_masks"]
-    )
-    np_mask = np.stack(df["category_masks"].values)
+def generate_dataset(db, split):
+    lance_table = db.open_table(split)
+    arrow = lance_table.to_arrow()
+    np_mask = np.stack(arrow["category_masks"].to_pylist())
     masks = torch.from_numpy(np_mask).to(device).half()
 
     num_masks = masks.size(0)
     mask_sums = masks.sum(dim=1, keepdim=True).half()
 
     schema = pa.schema([("a", pa.uint32()), ("b", pa.uint32())])
-    writer = pq.ParquetWriter("dataset/" + split + "_indices.parquet", schema)
+    out = db.create_table(split + "_indices", schema=schema, mode="overwrite")
 
     batch_size = 2048
     for i in tqdm(range(0, num_masks, batch_size)):
@@ -109,11 +104,12 @@ def generate_dataset(split):
         matches = matches.to(torch.uint32).cpu().numpy()
         a, b = matches[:, 0], matches[:, 1]
         table = pa.Table.from_arrays([a, b], names=["a", "b"])
-        writer.write_table(table)
-    writer.close()
+        out.add(table)
 
 
 def main():
+    db = lancedb.connect("dataset")
+
     model_id = "openai/clip-vit-base-patch32"
 
     processor = CLIPProcessor.from_pretrained(model_id)
@@ -127,14 +123,15 @@ def main():
             num_workers=2,
             persistent_workers=True,
             pin_memory=True,
+            multiprocessing_context="spawn",
         )
 
-        process(loader, model, processor, split)
+        process(db, loader, model, processor, split)
 
-        generate_dataset(split)
+        generate_dataset(db, split)
 
         if split == "train":
-            proces_categories_embeddings(dataset, processor, model)
+            proces_categories_embeddings(db, dataset, processor, model)
 
 
 if __name__ == "__main__":

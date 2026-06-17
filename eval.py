@@ -1,10 +1,9 @@
+import lancedb
+import numpy as np
 import pandas as pd
 import torch
 from torch.nn.functional import normalize
-from torch.utils.data import DataLoader
 from transformers import CLIPModel, CLIPTokenizer
-
-from data import CelebAEmbedding
 
 device = "cuda"
 
@@ -115,13 +114,10 @@ def main():
     with torch.inference_mode():
         eval_records = pd.read_json("celeba_evaluation.json").to_dict("records")
 
-        dataset = CelebAEmbedding("test.parquet")
-
-        dataloader = DataLoader(
-            dataset,
-            batch_size=len(dataset),
-        )
-        image_embs = next(iter(dataloader))[0].to(device)
+        db = lancedb.connect("dataset")
+        table = db.open_table("test")
+        col = table.to_lance().to_table(columns=["image_embeds"])["image_embeds"]
+        image_embs = torch.from_numpy(np.stack(col.to_numpy())).to(device)
 
         tokenizer = CLIPTokenizer.from_pretrained(model_id)
         model = CLIPModel.from_pretrained(model_id).to(device)
