@@ -2,7 +2,6 @@ import lancedb
 import numpy as np
 import pyarrow as pa
 import torch
-from datasets import Features, Sequence, Value
 from torch.utils.data import DataLoader
 from torchvision.datasets import CelebA
 from tqdm import tqdm
@@ -37,23 +36,21 @@ def proces_categories_embeddings(db, dataset, processor, model):
         text_outputs = model.get_text_features(**tokens).pooler_output
         text_embeds = text_outputs.cpu().numpy()
 
-    features = Features({"text_embeds": Sequence(Value("float32"))})
+    schema = pa.schema([pa.field("text_embeds", pa.list_(pa.float32(), 512))])
 
-    table = pa.Table.from_pydict(
-        {"text_embeds": text_embeds.tolist()}, schema=features.arrow_schema
-    )
+    table = pa.Table.from_pydict({"text_embeds": text_embeds.tolist()}, schema=schema)
     db.create_table("categories_embeddings", data=table, mode="overwrite")
 
 
 def process(db, loader, model, processor, split):
-    features = Features(
-        {
-            "image_embeds": Sequence(Value("float32")),
-            "category_masks": Sequence(Value("bool")),
-        }
+    schema = pa.schema(
+        [
+            pa.field("image_embeds", pa.list_(pa.float32(), 512)),
+            pa.field("category_masks", pa.list_(pa.bool_(), 40)),
+        ]
     )
 
-    table = db.create_table(split, schema=features.arrow_schema, mode="overwrite")
+    table = db.create_table(split, schema=schema, mode="overwrite")
 
     with torch.inference_mode():
         for img, masks in tqdm(loader):
@@ -69,7 +66,7 @@ def process(db, loader, model, processor, split):
                 "category_masks": list(category_masks),
             }
 
-            record_batch = pa.Table.from_pydict(batch, schema=features.arrow_schema)
+            record_batch = pa.Table.from_pydict(batch, schema=schema)
             table.add(record_batch)
 
 

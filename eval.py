@@ -109,23 +109,27 @@ def evaluate_dataset(tokenizer, model, image_embs, eval_records, k=10):
     return mean_precision, mean_recall
 
 
+def load_dataset():
+    db = lancedb.connect("dataset")
+    table = db.open_table("test")
+    col = table.to_lance().to_table(columns=["image_embeds"])["image_embeds"]
+    image_embs = torch.from_numpy(np.stack(col.to_numpy())).to(device)
+    return image_embs
+
+
 def main():
     model_id = "openai/clip-vit-base-patch32"
+    eval_records = pd.read_json("celeba_evaluation.json").to_dict("records")
+
+    tokenizer = CLIPTokenizer.from_pretrained(model_id)
+    model = CLIPModel.from_pretrained(model_id).to(device)
+
+    image_embs = load_dataset()
     with torch.inference_mode():
-        eval_records = pd.read_json("celeba_evaluation.json").to_dict("records")
-
-        db = lancedb.connect("dataset")
-        table = db.open_table("test")
-        col = table.to_lance().to_table(columns=["image_embeds"])["image_embeds"]
-        image_embs = torch.from_numpy(np.stack(col.to_numpy())).to(device)
-
-        tokenizer = CLIPTokenizer.from_pretrained(model_id)
-        model = CLIPModel.from_pretrained(model_id).to(device)
-
         precision, recall = evaluate_dataset(tokenizer, model, image_embs, eval_records)
 
-        print(f"Precision: {precision * 100:.2f}%")
-        print(f"Recall: {recall * 100:.2f}%")
+    print(f"Precision: {precision * 100:.2f}%")
+    print(f"Recall: {recall * 100:.2f}%")
 
 
 if __name__ == "__main__":
