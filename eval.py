@@ -1,4 +1,7 @@
+import sys
+
 import lancedb
+import mlflow
 import numpy as np
 import pandas as pd
 import torch
@@ -53,6 +56,101 @@ def construct_query(query):
             txt += "and "
         txt += sign + category + " "
     return txt
+
+
+def evaluate_dataset_model(eval_records, image_embs, model=None, k=10):
+    db = lancedb.connect("dataset")
+    table = db.open_table("categories_embeddings")
+    cols = table.to_lance().to_table()
+    text_col = cols["text_embeds"]
+    text_embs = torch.from_numpy(np.stack(text_col.to_numpy())).to(device)
+    text_cat = cols["attr_names"]
+
+    if model is None:
+        last_run_id = mlflow.search_runs(
+            experiment_names=["compositional-transformer"],
+            order_by=["start_time DESC"],
+            max_results=1,
+        ).iloc[0]["run_id"]
+        model = mlflow.pytorch.load_model(f"runs:/{last_run_id}/model")
+
+    with torch.no_grad():
+        mean_precision = 0.0
+        mean_recall = 0.0
+        total_samples = 0
+        for entry in eval_records:
+            print(entry["query"])
+
+            ground_truth_dict = entry["ground_truth"]
+
+            values = list(ground_truth_dict.values())
+
+            source_img_idx = list(map(int, ground_truth_dict.keys()))
+            source_idx = torch.tensor(source_img_idx, device=device)
+
+            source_img_embs = image_embs[source_img_idx]
+
+            queries = entry["query"].split(", ")
+            pos_queries = [term[1:] for term in queries if term.startswith("+")]
+            neg_queries = [term[1:] for term in queries if term.startswith("-")]
+
+            pos_source_text_embs = None
+            pos_masks = None
+            if pos_queries:
+                pos_masks = [np.isin(text_cat, q) for q in pos_queries]
+                pos_masks = np.stack(pos_masks)
+                pos_masks = torch.from_numpy(pos_masks).to(device)
+                pos_source_text_embs = torch.cat(
+                    [text_embs[m] for m in pos_masks], dim=0
+                )
+                pos_source_text_embs = pos_source_text_embs.unsqueeze(0).expand(
+                    source_img_embs.size(0), -1, -1
+                )
+
+            neg_source_text_embs = None
+            neg_masks = None
+            if neg_queries:
+                neg_masks = [np.isin(text_cat, q) for q in neg_queries]
+                neg_masks = np.stack(neg_masks)
+                neg_masks = torch.from_numpy(neg_masks).to(device)
+                neg_source_text_embs = torch.cat(
+                    [text_embs[m] for m in neg_masks], dim=0
+                )
+                neg_source_text_embs = neg_source_text_embs.unsqueeze(0).expand(
+                    source_img_embs.size(0), -1, -1
+                )
+
+            query_embs = model(
+                image_embed=source_img_embs,
+                pos_text_embed=pos_source_text_embs,
+                neg_text_embed=neg_source_text_embs,
+            )
+
+            sims = query_embs @ image_embs.T
+
+            # Remove source images
+            row_indices = torch.arange(len(source_idx), device=device)
+            sims[row_indices, source_idx] = -float("inf")
+
+            results = torch.topk(sims, k, largest=True)[1]
+            results = results.tolist()
+
+            query_precision = 0.0
+            query_recall = 0.0
+            for retrieved, val_list in zip(results, values):
+                precision, recall = evaluate_retrieval(retrieved, val_list, k)
+                query_precision += precision
+                query_recall += recall
+
+            query_len = len(ground_truth_dict.items())
+            print(f"Query precision: {query_precision * 100 / query_len:.2f}%")
+            print(f"Query recall: {query_recall * 100 / query_len:.2f}%")
+            mean_precision += query_precision
+            mean_recall += query_recall
+            total_samples += query_len
+        mean_precision = mean_precision / total_samples
+        mean_recall = mean_recall / total_samples
+        return mean_precision, mean_recall
 
 
 def evaluate_dataset(tokenizer, model, image_embs, eval_records, k=10):
@@ -117,19 +215,24 @@ def load_dataset():
     return image_embs
 
 
-def main():
-    model_id = "openai/clip-vit-base-patch32"
-    eval_records = pd.read_json("celeba_evaluation.json").to_dict("records")
-
-    tokenizer = CLIPTokenizer.from_pretrained(model_id)
-    model = CLIPModel.from_pretrained(model_id).to(device)
-
+def eval(type, model=None):
+    eval_records = pd.read_json("dataset/celeba_evaluation.json").to_dict("records")
     image_embs = load_dataset()
-    with torch.inference_mode():
+    if type == "baseline":
+        model_id = "openai/clip-vit-base-patch32"
+        model = CLIPModel.from_pretrained(model_id).to(device)
+        tokenizer = CLIPTokenizer.from_pretrained(model_id)
         precision, recall = evaluate_dataset(tokenizer, model, image_embs, eval_records)
-
+    if type == "model":
+        precision, recall = evaluate_dataset_model(eval_records, image_embs, model)
     print(f"Precision: {precision * 100:.2f}%")
     print(f"Recall: {recall * 100:.2f}%")
+    return precision, recall
+
+
+def main():
+    if len(sys.argv) > 1:
+        eval(sys.argv[1])
 
 
 if __name__ == "__main__":

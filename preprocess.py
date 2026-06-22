@@ -2,6 +2,7 @@ import lancedb
 import numpy as np
 import pyarrow as pa
 import torch
+from torch.nn.functional import normalize
 from torch.utils.data import DataLoader
 from torchvision.datasets import CelebA
 from tqdm import tqdm
@@ -33,12 +34,21 @@ def proces_categories_embeddings(db, dataset, processor, model):
     ).to(device)
 
     with torch.inference_mode():
-        text_outputs = model.get_text_features(**tokens).pooler_output
-        text_embeds = text_outputs.cpu().numpy()
+        text_embeds = model.get_text_features(**tokens).pooler_output
+        text_embeds = normalize(text_embeds)
+        text_embeds = text_embeds.cpu().numpy()
 
-    schema = pa.schema([pa.field("text_embeds", pa.list_(pa.float32(), 512))])
+    schema = pa.schema(
+        [
+            pa.field("attr_names", pa.string()),
+            pa.field("text_embeds", pa.list_(pa.float32(), 512)),
+        ]
+    )
 
-    table = pa.Table.from_pydict({"text_embeds": text_embeds.tolist()}, schema=schema)
+    table = pa.Table.from_pydict(
+        {"attr_names": dataset.attr_names[:40], "text_embeds": text_embeds.tolist()},
+        schema=schema,
+    )
     db.create_table("categories_embeddings", data=table, mode="overwrite")
 
 
@@ -56,8 +66,9 @@ def process(db, loader, model, processor, split):
         for img, masks in tqdm(loader):
             img = img.to(device, non_blocking=True)
 
-            img_emb = model.get_image_features(img).pooler_output
-            image_embeds = img_emb.cpu().numpy()
+            image_embeds = model.get_image_features(img).pooler_output
+            image_embeds = normalize(image_embeds)
+            image_embeds = image_embeds.cpu().numpy()
 
             category_masks = masks.numpy()
 
