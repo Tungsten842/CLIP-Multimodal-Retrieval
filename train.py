@@ -20,8 +20,8 @@ from model import Model, collate_fn
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def info_nce_loss(predicted_embeds, target_embeds, temperature):
-    logits = torch.matmul(predicted_embeds, target_embeds.T) / temperature
+def info_nce_loss(predicted_embeds, target_embeds):
+    logits = torch.matmul(predicted_embeds, target_embeds.T) / 0.01
 
     batch_size = predicted_embeds.shape[0]
     labels = torch.arange(batch_size, device=predicted_embeds.device)
@@ -36,7 +36,7 @@ def run_step(model, batch):
         b.to(device, non_blocking=True) for b in batch
     ]
     predicted_imgb = model(imga, pos_txt, pos_msk, neg_txt, neg_msk)
-    nce_loss = info_nce_loss(predicted_imgb, imgb, 0.07)
+    nce_loss = info_nce_loss(predicted_imgb, imgb)
     cos_dist = 1.0 - (predicted_imgb * imgb).sum(dim=-1).mean()
     return nce_loss, cos_dist
 
@@ -55,8 +55,8 @@ def validate(model, val_loader):
 
 def main():
     config = {
-        "learning_rate": 1e-4,
-        "max_lr": 1e-3,
+        "learning_rate": 2e-4,
+        "max_lr": 2e-3,
         "batch_size": 1024,
         "embed_dim": 512,
         "nhead": 8,
