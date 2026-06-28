@@ -67,12 +67,21 @@ class Model(nn.Module):
 
         summary(self)
 
+    def _prepare_text(self, embeds, mask, proj_layer):
+        if embeds is None:
+            return None, None
+
+        seq = proj_layer(embeds)
+        if mask is None:
+            mask = seq.new_zeros(seq.shape[:2], dtype=torch.bool)
+        return seq, mask
+
     def forward(
         self,
         image_embed,
-        pos_text_embed=None,
+        pos_text_embeds=None,
+        neg_text_embeds=None,
         pos_mask=None,
-        neg_text_embed=None,
         neg_mask=None,
     ):
         batch_size = image_embed.shape[0]
@@ -80,26 +89,13 @@ class Model(nn.Module):
         text_seqs = []
         text_masks = []
 
-        configs = [
-            (pos_text_embed, pos_mask, self.tp_proj),
-            (neg_text_embed, neg_mask, self.tn_proj),
-        ]
-        for emb, mask, proj in configs:
-            if emb is None:
-                continue
+        pos_seq, pos_mask = self._prepare_text(pos_text_embeds, pos_mask, self.tp_proj)
+        neg_seq, neg_mask = self._prepare_text(neg_text_embeds, neg_mask, self.tn_proj)
 
-            emb = proj(emb)
-            text_seqs.append(emb)
-
-            if mask is None:
-                mask = torch.zeros(
-                    batch_size, emb.shape[1], device=emb.device, dtype=torch.bool
-                )
-
-            text_masks.append(mask)
-
-        text_seqs = torch.cat(text_seqs, dim=1)
-        text_masks = torch.cat(text_masks, dim=1)
+        text_seqs = torch.cat([s for s in (pos_seq, neg_seq) if s is not None], dim=1)
+        text_masks = torch.cat(
+            [m for m in (pos_mask, neg_mask) if m is not None], dim=1
+        )
 
         image_embed = self.i_proj(image_embed).unsqueeze(1)
 

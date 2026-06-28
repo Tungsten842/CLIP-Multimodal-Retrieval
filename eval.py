@@ -121,9 +121,9 @@ def evaluate_dataset_model(eval_records, image_embs, model=None, k=10):
                 )
 
             query_embs = model(
-                image_embed=source_img_embs,
-                pos_text_embed=pos_source_text_embs,
-                neg_text_embed=neg_source_text_embs,
+                source_img_embs,
+                pos_source_text_embs,
+                neg_source_text_embs,
             )
 
             sims = query_embs @ image_embs.T

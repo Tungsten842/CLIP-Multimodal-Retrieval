@@ -35,7 +35,7 @@ def run_step(model, batch):
     imga, imgb, pos_txt, pos_msk, neg_txt, neg_msk = [
         b.to(device, non_blocking=True) for b in batch
     ]
-    predicted_imgb = model(imga, pos_txt, pos_msk, neg_txt, neg_msk)
+    predicted_imgb = model(imga, pos_txt, neg_txt, pos_msk, neg_msk)
     nce_loss = info_nce_loss(predicted_imgb, imgb)
     cos_dist = 1.0 - (predicted_imgb * imgb).sum(dim=-1).mean()
     return nce_loss, cos_dist
