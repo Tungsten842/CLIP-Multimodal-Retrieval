@@ -8,7 +8,7 @@ import torch
 import torch.nn.functional as F
 from mlflow import MlflowClient
 from mlflow.entities import Metric
-from torch.optim import Adam
+from torch.optim import AdamW
 from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -23,8 +23,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 def info_nce_loss(predicted_embeds, target_embeds):
     logits = torch.matmul(predicted_embeds, target_embeds.T) / 0.01
 
-    batch_size = predicted_embeds.shape[0]
-    labels = torch.arange(batch_size, device=predicted_embeds.device)
+    labels = torch.arange(predicted_embeds.shape[0], device=predicted_embeds.device)
 
     loss = F.cross_entropy(logits, labels)
 
@@ -57,9 +56,10 @@ def main():
     config = {
         "learning_rate": 2e-4,
         "max_lr": 2e-3,
+        "weight_decay": 0.01,
         "batch_size": 1024,
         "embed_dim": 512,
-        "nhead": 8,
+        "nhead": 4,
         "dataset_percentage": 0.5,
         "seed": 42,
     }
@@ -105,9 +105,10 @@ def main():
         prefetch_factor=32,
     )
 
-    optimizer = Adam(
+    optimizer = AdamW(
         model.parameters(),
         lr=config["learning_rate"],
+        weight_decay=config["weight_decay"],
     )
     scheduler = OneCycleLR(
         optimizer,
