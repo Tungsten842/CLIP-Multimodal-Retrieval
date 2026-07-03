@@ -103,6 +103,7 @@ def main():
         generator=g_val,
         multiprocessing_context="spawn",
         prefetch_factor=32,
+        drop_last=True,
     )
 
     optimizer = AdamW(

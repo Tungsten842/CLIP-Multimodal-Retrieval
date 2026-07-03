@@ -28,6 +28,7 @@ class CelebAProcessed(CelebA):
 
 def proces_categories_embeddings(db, dataset, processor, model):
     attr_names = [attr.replace("_", " ") for attr in dataset.attr_names[:40]]
+    attr_names = [f"a photo of a person with {attr}" for attr in attr_names]
 
     tokens = processor.tokenizer(
         attr_names, padding=True, truncation=True, return_tensors="pt"
@@ -52,7 +53,16 @@ def proces_categories_embeddings(db, dataset, processor, model):
     db.create_table("categories_embeddings", data=table, mode="overwrite")
 
 
-def process(db, loader, model, processor, split):
+def process(db, dataset, model, processor, split):
+    loader = DataLoader(
+        dataset,
+        batch_size=256,
+        num_workers=2,
+        persistent_workers=True,
+        pin_memory=True,
+        multiprocessing_context="spawn",
+    )
+
     schema = pa.schema(
         [
             pa.field("image_embeds", pa.list_(pa.float32(), 512)),
@@ -102,8 +112,8 @@ def generate_dataset(db, split):
         dot = torch.matmul(batch, masks.T)
         dists = mask_sums[i:end] + mask_sums.T - 2 * dot
 
-        # Pick indices with hamming distance < 4
-        matches = (dists < 4).nonzero()
+        # Pick indices with hamming distance [1,3]
+        matches = ((dists > 0) & (dists < 4)).nonzero()
         # Correct index
         matches[:, 0] += i
         # Remove self matches
@@ -125,16 +135,8 @@ def main():
 
     for split in ["train", "valid", "test"]:
         dataset = CelebAProcessed(processor, root="dataset", split=split)
-        loader = DataLoader(
-            dataset,
-            batch_size=256,
-            num_workers=2,
-            persistent_workers=True,
-            pin_memory=True,
-            multiprocessing_context="spawn",
-        )
 
-        process(db, loader, model, processor, split)
+        process(db, dataset, model, processor, split)
 
         generate_dataset(db, split)
 
