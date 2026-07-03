@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from data import CelebAPairedEmbeddings, seed_worker
-from eval import eval
+from evaluate import evaluate
 from model import Model, collate_fn
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -173,7 +173,7 @@ def main():
             step += config["batch_size"]
 
         model.load_state_dict(best_model)
-        precision, recall = eval("model", model)
+        precision, recall = evaluate("model", model)
 
         mlflow.log_metrics({"precision": precision, "recall": recall})
         mlflow.pytorch.log_model(

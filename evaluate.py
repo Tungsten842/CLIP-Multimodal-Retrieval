@@ -215,7 +215,7 @@ def load_dataset():
     return image_embs
 
 
-def eval(type, model=None):
+def evaluate(type, model=None):
     eval_records = pd.read_json("dataset/celeba_evaluation.json").to_dict("records")
     image_embs = load_dataset()
     if type == "baseline":
@@ -232,7 +232,7 @@ def eval(type, model=None):
 
 def main():
     if len(sys.argv) > 1:
-        eval(sys.argv[1])
+        evaluate(sys.argv[1])
 
 
 if __name__ == "__main__":
